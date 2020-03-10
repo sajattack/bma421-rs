@@ -1,0 +1,11 @@
+[package]
+name = "bma421"
+version = "0.1.0"
+authors = ["Paul Sajna <sajattack@gmail.com>"]
+edition = "2018"
+keywords = ["embedded-hal-driver", "accelerometer"]
+
+[dependencies]
+embedded-hal = "~0.2"
+accelerometer = { version = "~0.6", features = ["orientation"] }
+bitflags = "1.2"
