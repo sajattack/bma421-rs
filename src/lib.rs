@@ -2,7 +2,6 @@
 #![allow(non_camel_case_types)]
 
 mod register;
-mod config;
 
 use core::fmt::Debug;
 use core::convert::TryInto;
