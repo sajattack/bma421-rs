@@ -102,21 +102,26 @@ impl<I2C, E> BMA421 <I2C>
 where
     I2C: WriteRead<Error = E> + Write<Error = E>
 {
-    pub fn new(i2c: I2C) -> Result<Self, Error<E>> {
-       let mut bma421 = BMA421 { i2c };
-       let id = bma421.read_register(Register::CHIPID)?;
-       if id != DEVICE_ID {
+    pub fn new(i2c: I2C, delay: &mut DelayMs<u8>) -> Result<Self, Error<E>> {
+        // TODO occasionally getting i2c transmit errors in here, needs debugging
+        let mut bma421 = BMA421 { i2c };
+        let id = bma421.read_register(Register::CHIPID)?;
+        if id != DEVICE_ID {
             return Err(Error::WrongChip(id))
-       } else {
-          bma421.soft_reset()?;
-          bma421.set_accel_enable(true)?;
-          bma421.set_datarate(DataRate::Hz_100)?;
-          bma421.set_range(Range::G2)?;
-          bma421.set_bandwidth(Bandwidth::NORMAL_AVG4)?;
-          bma421.set_perf_mode(PerfMode::CONTINUOUS)?;
+        } else {
+            bma421.soft_reset()?;
+            delay.delay_ms(200);
+            bma421.set_accel_enable(true)?;
+            delay.delay_ms(100);
+          
+            bma421.set_datarate(DataRate::Hz_100)?;
+            bma421.set_range(Range::G2)?;
+            bma421.set_bandwidth(Bandwidth::NORMAL_AVG4)?;
+            bma421.set_perf_mode(PerfMode::CONTINUOUS)?;
+            delay.delay_ms(100);
 
-          Ok(bma421)
-       }
+            Ok(bma421)
+        }
     }
 
     pub fn soft_reset(&mut self) -> Result<(), Error<E>> {
@@ -137,7 +142,8 @@ where
 
     pub fn set_datarate(&mut self, datarate: DataRate) -> Result<(), Error<E>> {
         let mut config_data = self.read_register(Register::ACCEL_CONFIG)?;
-        config_data = (config_data & !0x0f) | datarate.bits();
+        config_data &= !0x0f;
+        config_data |= datarate.bits();
         self.write_register(Register::ACCEL_CONFIG, config_data)?;
         Ok(())
     }
@@ -158,7 +164,7 @@ where
 
     pub fn set_range(&mut self, range: Range) -> Result<(), Error<E>> {
         let mut config_data = self.read_register(Register::ACCEL_CONFIG)?;
-        config_data = range.bits() & 0x03;
+        config_data |= range.bits() & 0x03;
         self.write_register(Register::ACCEL_RANGE, config_data)?;
         Ok(())
     }
