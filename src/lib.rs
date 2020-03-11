@@ -10,16 +10,9 @@ use embedded_hal::blocking::delay::DelayMs;
 
 pub use register::Register;
 pub use accelerometer;
-use accelerometer::{I16x3, Accelerometer, Tracker};
+use accelerometer::{{vector::{I16x3, F32x3}}, Accelerometer, RawAccelerometer, Tracker};
 
-#[derive(Debug)]
-pub enum Error<E> {
-    /// I²C bus error
-    I2C(E),
-    /// Invalid input data.
-    WrongChip(u8),
-    WriteToReadOnly,
-}
+pub use accelerometer::error::{Error, ErrorKind};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 #[repr(u8)]
@@ -100,14 +93,15 @@ pub const DEVICE_ID: u8 = 0x11;
 
 impl<I2C, E> BMA421 <I2C>
 where
-    I2C: WriteRead<Error = E> + Write<Error = E>
+    I2C: WriteRead<Error = E> + Write<Error = E>,
+    E: Debug
 {
     pub fn new(i2c: I2C, delay: &mut DelayMs<u8>) -> Result<Self, Error<E>> {
         // TODO occasionally getting i2c transmit errors in here, needs debugging
         let mut bma421 = BMA421 { i2c };
         let id = bma421.read_register(Register::CHIPID)?;
         if id != DEVICE_ID {
-            return Err(Error::WrongChip(id))
+            return Err(Error::new(ErrorKind::Device))
         } else {
             bma421.soft_reset()?;
             delay.delay_ms(200);
@@ -169,52 +163,75 @@ where
         Ok(())
     }
 
-    pub fn read_register(&mut self, register: Register) -> Result<u8, Error<E>> {
+    pub fn read_register(&mut self, register: Register) -> Result<u8, E> {
         let mut data = [0];
         self.i2c
             .write_read(I2C_ADDR, &[register.addr()], &mut data)
-            .map_err(Error::I2C)
             .and(Ok(data[0]))
     }
 
-    fn read_accel_bytes(&mut self) -> Result<[u8;6], Error<E>> {
+    fn read_accel_bytes(&mut self) -> Result<[u8;6], E> {
         let mut data = [0u8;6];
         self.i2c
             .write_read(I2C_ADDR, &[Register::ACC_DATA_8.addr()], &mut data)
-            .map_err(Error::I2C)
             .and(Ok(data))
     }
 
     pub fn write_register(&mut self, register: Register, value: u8) -> Result<(), Error<E>>
     {
         if register.read_only() {
-            return Err(Error::WriteToReadOnly);
+            return Err(Error::new(ErrorKind::Param))
         }
-        self.i2c.write(I2C_ADDR, &[register.addr(), value]).map_err(Error::I2C)
+        self.i2c.write(I2C_ADDR, &[register.addr(), value]).map_err(|_| Error::new(ErrorKind::Bus))
     }
 
-    //pub fn try_into_tracker(mut self) -> Result<Tracker<Self, I16x3>, Error<E>> 
-    //where 
-        //E: Debug
-    //{
-        //self.set_range(Range::G8)?;
-        //Ok(Tracker::new(self, 3700))
-    //}
+    pub fn try_into_tracker(mut self) -> Result<Tracker, Error<E>> 
+    where 
+        E: Debug
+    {
+        self.set_range(Range::G8)?;
+        Ok(Tracker::new(1.0))
+    }
 }
 
-impl<I2C, E> Accelerometer<I16x3> for BMA421<I2C>
+impl<I2C, E> RawAccelerometer<I16x3> for BMA421<I2C>
 where
     I2C: WriteRead<Error = E> + Write<Error = E>,
     E: Debug,
 {
-    type Error = Error<E>;
-
-    /// Get acceleration reading from the accelerometer
-    fn acceleration(&mut self) -> Result<I16x3, Error<E>> {
+    type Error = E;
+    fn accel_raw(&mut self) -> Result<I16x3, Error<E>> {
        let accel_bytes = self.read_accel_bytes()?;
-       let x = i16::from_le_bytes(accel_bytes[0..2].try_into().unwrap());
-       let y = i16::from_le_bytes(accel_bytes[2..4].try_into().unwrap());
-       let z = i16::from_le_bytes(accel_bytes[4..6].try_into().unwrap());
+       let x: i16 = i16::from_le_bytes(accel_bytes[0..2].try_into().unwrap()) / 16;
+       let y: i16 = i16::from_le_bytes(accel_bytes[2..4].try_into().unwrap()) / 16;
+       let z: i16 = i16::from_le_bytes(accel_bytes[4..6].try_into().unwrap()) / 16;
        Ok(I16x3::new(x, y, z))
     }
 }
+
+impl<I2C, E> Accelerometer for BMA421<I2C>
+where
+    I2C: WriteRead<Error = E> + Write<Error = E>,
+    E: Debug,
+{
+    type Error = E;
+
+    /// Get normalized ±g reading from the accelerometer.
+    fn accel_norm(&mut self) -> Result<F32x3, Error<E>> {
+        let raw_data: I16x3 = self.accel_raw()?;
+        // TODO read back the range and set accordingly
+        let range: f32 = 2.0; 
+
+        let x = (raw_data.x as f32 / 2048 as f32) * range;
+        let y = (raw_data.y as f32 / 2048 as f32) * range;
+        let z = (raw_data.z as f32 / 2048 as f32) * range;
+
+        Ok(F32x3::new(x, y, z))
+    }
+
+    fn sample_rate(&mut self) -> Result<f32, Error<Self::Error>> {
+        // TODO read back the datarate and set accordingly
+        Ok(100.0)
+    }
+}
+
