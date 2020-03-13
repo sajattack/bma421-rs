@@ -40,16 +40,17 @@ where
             return Err(Error::new(ErrorKind::Device))
         } else {
             bma421.soft_reset()?;
-            delay.delay_ms(200);
+            delay.delay_ms(50);
+
             bma421.write_config_file(delay)?;
-            bma421.set_accel_enable(true)?;
-            delay.delay_ms(100);
+            delay.delay_ms(20);
           
-            bma421.set_datarate(DataRate::Hz_100)?;
-            bma421.set_range(Range::G2)?;
+            bma421.set_datarate(DataRate::Hz_50)?;
+            bma421.set_range(Range::G4)?;
             bma421.set_bandwidth(Bandwidth::NORMAL_AVG4)?;
             bma421.set_perf_mode(PerfMode::CONTINUOUS)?;
-            delay.delay_ms(100);
+            bma421.set_accel_enable(true)?;
+            delay.delay_ms(40);
 
             Ok(bma421)
         }
@@ -57,7 +58,7 @@ where
 
     fn write_config_file(&mut self, delay: &mut DelayMs<u8>) -> Result<(), Error<E>> {
         let mut power_conf = self.read_register(Register::POWER_CONF)?;
-        power_conf = power_conf & !0x01 | 0 & 0x01;
+        power_conf &= !(1 << 0x01);
         self.write_register(Register::POWER_CONF, power_conf)?;
         delay.delay_ms(1);
         self.write_register(Register::INIT_CTRL, 0x00)?;
@@ -66,10 +67,10 @@ where
             buf.copy_from_slice(&config::CONFIG_FILE[i*255..(i+1)*255]);
             self.i2c.write(I2C_ADDR, &buf)?;
         }
-        const remainder: usize = CONFIG_FILE.len() % 255;
-        let mut buf = [0u8; remainder];
+        const REMAINDER: usize = CONFIG_FILE.len() % 255;
+        let mut buf = [0u8; REMAINDER];
         buf.copy_from_slice(
-            &CONFIG_FILE[(CONFIG_FILE.len() - remainder)..CONFIG_FILE.len()]
+            &CONFIG_FILE[(CONFIG_FILE.len() - REMAINDER)..CONFIG_FILE.len()]
         );
         self.i2c.write(
             I2C_ADDR, 
@@ -79,8 +80,11 @@ where
         delay.delay_ms(150);
         let config_stream_status = self.read_register(Register::INTERNAL_STAT)?; 
         //if config_stream_status != 0x01 {
-            //Err(Error::new(ErrorKind::Device))
+        //    Err(Error::new(ErrorKind::Device))
         //} else {
+            let mut power_conf = self.read_register(Register::POWER_CONF)?;
+            power_conf &= !(0 << 0x01);
+            self.write_register(Register::POWER_CONF, power_conf)?;
             Ok(())
         //}
     }
