@@ -1,88 +1,21 @@
 #![no_std]
-#![allow(non_camel_case_types)]
 
 mod register;
+mod types;
 
 use core::fmt::Debug;
 use core::convert::TryInto;
+use core::convert::TryFrom;
 use embedded_hal::blocking::i2c::{WriteRead, Write};
 use embedded_hal::blocking::delay::DelayMs;
 
 pub use register::Register;
 pub use accelerometer;
-use accelerometer::{{vector::{I16x3, F32x3}}, Accelerometer, RawAccelerometer, Tracker};
+use accelerometer::{{vector::{I16x3, F32x3}}, Accelerometer, RawAccelerometer};
 
 pub use accelerometer::error::{Error, ErrorKind};
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum DataRate {
-    Hz_0_78 = 0x01,
-    Hz_1_56 = 0x02,
-    Hz_3_12 = 0x03,
-    Hz_6_25 = 0x04,
-    Hz_12_5 = 0x05,
-    Hz_25   = 0x06,
-    Hz_50   = 0x07,
-    Hz_100  = 0x08,
-    Hz_200  = 0x09,
-    Hz_400  = 0x0A,
-    Hz_800  = 0x0B,
-    Hz_1600 = 0x0C,
-}
-
-impl DataRate {
-    pub fn bits(self) -> u8 {
-        self as u8
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum Range {
-    G2 = 0x00,
-    G4 = 0x01,
-    G8 = 0x02,
-    G16 = 0x03,
-}
-
-impl Range {
-    pub fn bits(self) -> u8 {
-        self as u8
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum Bandwidth {
-    OSR4_AVG1   = 0x00,
-    OSR2_AVG2   = 0x01,
-    NORMAL_AVG4 = 0x02,
-    CIC_AVG8    = 0x03,
-    RES_AVG16   = 0x04,
-    RES_AVG32   = 0x05,
-    RES_AVG64   = 0x06,
-    RES_AVG128  = 0x07,
-}
-
-impl Bandwidth {
-    pub fn bits(self) -> u8 {
-        self as u8
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u8)]
-pub enum PerfMode {
-    CIC_AVG    = 0x00,
-    CONTINUOUS = 0x01,
-}
-
-impl PerfMode {
-    pub fn bits(self) -> u8 {
-        self as u8
-    }
-}
+pub use crate::types::*;
 
 pub struct BMA421<I2C> {
     i2c: I2C,
@@ -90,6 +23,7 @@ pub struct BMA421<I2C> {
 
 pub const I2C_ADDR: u8 = 0x18;
 pub const DEVICE_ID: u8 = 0x11;
+pub const RESOLUTION: u8 = 12;
 
 impl<I2C, E> BMA421 <I2C>
 where
@@ -141,12 +75,28 @@ where
         self.write_register(Register::ACCEL_CONFIG, config_data)?;
         Ok(())
     }
+    
+    pub fn get_datarate(&mut self) -> Result<DataRate, Error<E>> {
+        let config_data = self.read_register(Register::ACCEL_CONFIG)?;
+        let datarate = DataRate::try_from(config_data & 0x0f).map_err(|_| {
+            Error::new(ErrorKind::Device)
+        })?;
+        Ok(datarate)
+    }
 
     pub fn set_bandwidth(&mut self, bandwidth: Bandwidth) -> Result<(), Error<E>> {
         let mut config_data = self.read_register(Register::ACCEL_CONFIG)?;
         config_data |=  bandwidth.bits() << 4 ;
         self.write_register(Register::ACCEL_CONFIG, config_data)?;
         Ok(())
+    }
+
+    pub fn get_bandwidth(&mut self) -> Result<Bandwidth, Error<E>> {
+        let config_data = self.read_register(Register::ACCEL_CONFIG)?;
+        let bandwidth = Bandwidth::try_from((config_data & 0x70) >> 4).map_err(|_| {
+            Error::new(ErrorKind::Device)
+        })?;
+        Ok(bandwidth)
     }
 
     pub fn set_perf_mode(&mut self, perf_mode: PerfMode) -> Result<(), Error<E>> {
@@ -156,11 +106,27 @@ where
         Ok(())
     }
 
+    pub fn get_perf_mode(&mut self) -> Result<PerfMode, Error<E>> {
+        let config_data = self.read_register(Register::ACCEL_CONFIG)?;
+        let perf_mode = PerfMode::try_from((config_data & 0x80) >> 7).map_err(|_| {
+            Error::new(ErrorKind::Device)
+        })?;
+        Ok(perf_mode)
+    }
+
     pub fn set_range(&mut self, range: Range) -> Result<(), Error<E>> {
         let mut config_data = self.read_register(Register::ACCEL_CONFIG)?;
         config_data |= range.bits() & 0x03;
         self.write_register(Register::ACCEL_RANGE, config_data)?;
         Ok(())
+    }
+
+    pub fn get_range(&mut self) -> Result<Range, Error<E>> {
+        let config_data = self.read_register(Register::ACCEL_RANGE)?;
+        let range = Range::try_from(config_data & 0x03).map_err(|_| {
+            Error::new(ErrorKind::Device)
+        })?;
+        Ok(range)
     }
 
     pub fn read_register(&mut self, register: Register) -> Result<u8, E> {
@@ -183,14 +149,6 @@ where
             return Err(Error::new(ErrorKind::Param))
         }
         self.i2c.write(I2C_ADDR, &[register.addr(), value]).map_err(|_| Error::new(ErrorKind::Bus))
-    }
-
-    pub fn try_into_tracker(mut self) -> Result<Tracker, Error<E>> 
-    where 
-        E: Debug
-    {
-        self.set_range(Range::G8)?;
-        Ok(Tracker::new(1.0))
     }
 }
 
@@ -219,19 +177,17 @@ where
     /// Get normalized ±g reading from the accelerometer.
     fn accel_norm(&mut self) -> Result<F32x3, Error<E>> {
         let raw_data: I16x3 = self.accel_raw()?;
-        // TODO read back the range and set accordingly
-        let range: f32 = 2.0; 
+        let range: f32 = self.get_range()?.into();
 
-        let x = (raw_data.x as f32 / 2048 as f32) * range;
-        let y = (raw_data.y as f32 / 2048 as f32) * range;
-        let z = (raw_data.z as f32 / 2048 as f32) * range;
+        let x = (raw_data.x as f32 / ((2 << RESOLUTION-2)) as f32) * range;
+        let y = (raw_data.y as f32 / ((2 << RESOLUTION-2)) as f32) * range;
+        let z = (raw_data.z as f32 / ((2 << RESOLUTION-2)) as f32) * range;
 
         Ok(F32x3::new(x, y, z))
     }
 
     fn sample_rate(&mut self) -> Result<f32, Error<Self::Error>> {
-        // TODO read back the datarate and set accordingly
-        Ok(100.0)
+        Ok(self.get_datarate()?.into())
     }
 }
 
