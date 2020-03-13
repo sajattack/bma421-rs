@@ -2,6 +2,7 @@
 
 mod register;
 mod types;
+mod config;
 
 use core::fmt::Debug;
 use core::convert::TryInto;
@@ -15,7 +16,8 @@ use accelerometer::{{vector::{I16x3, F32x3}}, Accelerometer, RawAccelerometer};
 
 pub use accelerometer::error::{Error, ErrorKind};
 
-pub use crate::types::*;
+pub use types::*;
+use config::CONFIG_FILE;
 
 pub struct BMA421<I2C> {
     i2c: I2C,
@@ -39,6 +41,7 @@ where
         } else {
             bma421.soft_reset()?;
             delay.delay_ms(200);
+            bma421.write_config_file(delay)?;
             bma421.set_accel_enable(true)?;
             delay.delay_ms(100);
           
@@ -50,6 +53,36 @@ where
 
             Ok(bma421)
         }
+    }
+
+    fn write_config_file(&mut self, delay: &mut DelayMs<u8>) -> Result<(), Error<E>> {
+        let mut power_conf = self.read_register(Register::POWER_CONF)?;
+        power_conf = power_conf & !0x01 | 0 & 0x01;
+        self.write_register(Register::POWER_CONF, power_conf)?;
+        delay.delay_ms(1);
+        self.write_register(Register::INIT_CTRL, 0x00)?;
+        let mut buf = [0u8;255];
+        for i in 0..CONFIG_FILE.len() / 255 {
+            buf.copy_from_slice(&config::CONFIG_FILE[i*255..(i+1)*255]);
+            self.i2c.write(I2C_ADDR, &buf)?;
+        }
+        const remainder: usize = CONFIG_FILE.len() % 255;
+        let mut buf = [0u8; remainder];
+        buf.copy_from_slice(
+            &CONFIG_FILE[(CONFIG_FILE.len() - remainder)..CONFIG_FILE.len()]
+        );
+        self.i2c.write(
+            I2C_ADDR, 
+            &buf
+        )?;
+        self.write_register(Register::INIT_CTRL, 0x01)?;
+        delay.delay_ms(150);
+        let config_stream_status = self.read_register(Register::INTERNAL_STAT)?; 
+        //if config_stream_status != 0x01 {
+            //Err(Error::new(ErrorKind::Device))
+        //} else {
+            Ok(())
+        //}
     }
 
     pub fn soft_reset(&mut self) -> Result<(), Error<E>> {
@@ -66,6 +99,12 @@ where
             );
         self.write_register(Register::POWER_CTRL, power_ctrl_reg_data)?;
         Ok(())
+    }
+
+    pub fn get_accel_enable(&mut self) -> Result<bool, Error<E>> {
+        let power_ctrl_reg_data = self.read_register(Register::POWER_CTRL)?;
+        let enabled = if (power_ctrl_reg_data & 0x04) >> 2 == 1 { true } else { false };
+        Ok(enabled)
     }
 
     pub fn set_datarate(&mut self, datarate: DataRate) -> Result<(), Error<E>> {
@@ -127,6 +166,31 @@ where
             Error::new(ErrorKind::Device)
         })?;
         Ok(range)
+    }
+
+    pub fn set_step_counter_enable(&mut self, enable: bool) -> Result<(), Error<E>> {
+        let mut feature_config = self.read_register(Register::FEATURE_CONFIG)?;
+        feature_config = 
+            (feature_config & !0x10) |
+            (
+                (if enable {1} else {0}) << 4
+            );
+        self.write_register(Register::FEATURE_CONFIG, feature_config)?;
+        Ok(())
+    }
+
+    pub fn reset_step_count(&mut self) -> Result<(), Error<E>> {
+        let mut feature_config = self.read_register(Register::FEATURE_CONFIG)?;
+        feature_config = (feature_config & !0x04) | (1 << 2);
+        self.write_register(Register::FEATURE_CONFIG, feature_config)?;
+        Ok(())
+    }
+
+    pub fn get_step_count(&mut self) -> Result<u32, Error<E>> {
+        let mut buf = [0u8;4];
+        self.i2c
+            .write_read(I2C_ADDR, &[Register::STEP_CNT_OUT_0.addr()], &mut buf)?;
+            Ok(u32::from_le_bytes(buf))
     }
 
     pub fn read_register(&mut self, register: Register) -> Result<u8, E> {
