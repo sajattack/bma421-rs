@@ -38,6 +38,8 @@ pub enum Register {
     INT_MAP_2           = 0x57,
     INT_MAP_DATA        = 0x58,
     INIT_CTRL           = 0x59,
+    ASIC_LSB            = 0x5B,
+    ASIC_MSB            = 0x5C,
     FEATURE_CONFIG      = 0x5E,
     IF_CONFIG           = 0x6B,
     ACC_SELF_TEST       = 0x6D,

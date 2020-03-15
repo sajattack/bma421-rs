@@ -17,7 +17,7 @@ use accelerometer::{{vector::{I16x3, F32x3}}, Accelerometer, RawAccelerometer};
 pub use accelerometer::error::{Error, ErrorKind};
 
 pub use types::*;
-use config::CONFIG_FILE;
+use config::{CONFIG_FILE, REMAINDER};
 
 pub struct BMA421<I2C> {
     i2c: I2C,
@@ -62,20 +62,16 @@ where
         self.write_register(Register::POWER_CONF, power_conf)?;
         delay.delay_ms(1);
         self.write_register(Register::INIT_CTRL, 0x00)?;
-        let mut buf = [0u8;255];
-        for i in 0..CONFIG_FILE.len() / 255 {
-            buf.copy_from_slice(&config::CONFIG_FILE[i*255..(i+1)*255]);
-            self.i2c.write(I2C_ADDR, &buf)?;
+        let mut buf = [0u8;254];
+        for i in 0..CONFIG_FILE.len() / 254 {
+            buf.copy_from_slice(&config::CONFIG_FILE[i*254..(i+1)*254]);
+            self.stream_transfer_write(&buf, (i*254) as u16)?;
         }
-        const REMAINDER: usize = CONFIG_FILE.len() % 255;
         let mut buf = [0u8; REMAINDER];
         buf.copy_from_slice(
             &CONFIG_FILE[(CONFIG_FILE.len() - REMAINDER)..CONFIG_FILE.len()]
         );
-        self.i2c.write(
-            I2C_ADDR, 
-            &buf
-        )?;
+        self.stream_transfer_write(&buf, (CONFIG_FILE.len() - REMAINDER) as u16)?;
         self.write_register(Register::INIT_CTRL, 0x01)?;
         delay.delay_ms(150);
         let config_stream_status = self.read_register(Register::INTERNAL_STAT)?; 
@@ -87,6 +83,31 @@ where
             self.write_register(Register::POWER_CONF, power_conf)?;
             Ok(())
         //}
+    }
+
+    fn stream_transfer_write(
+        &mut self,
+        stream_data: &[u8],
+        index: u16
+    ) -> Result<(), Error<E>> {
+        debug_assert!(index % 2 == 0, "index is not even");
+        let asic_msb = ((index/2) >> 4) as u8;
+        let asic_lsb = ((index/2) & 0x0f) as u8;
+        self.write_register(Register::ASIC_LSB, asic_lsb)?;
+        self.write_register(Register::ASIC_MSB, asic_msb)?;
+        let mut buf = [0u8;255];
+        //TODO fix dirty hack
+        if stream_data.len() == 254 {
+            buf[0] = Register::FEATURE_CONFIG.addr();
+            buf[1..].copy_from_slice(stream_data);
+        } else {
+            let mut buf = [0u8;REMAINDER+1];
+            buf[0] = Register::FEATURE_CONFIG.addr();
+            buf[1..].copy_from_slice(stream_data);
+        }
+        self.i2c.write(I2C_ADDR, &buf)?;
+
+        Ok(())
     }
 
     pub fn soft_reset(&mut self) -> Result<(), Error<E>> {
