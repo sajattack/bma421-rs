@@ -218,6 +218,13 @@ where
             Ok(u32::from_le_bytes(buf))
     }
 
+    /// Returns temperature in degrees celsius
+    pub fn get_temperature(&mut self) -> Result<i8, Error<E>> {
+        let raw_temp = self.read_register(Register::TEMPERATURE)?;
+        let celsius = raw_temp as i8 + 23;
+        Ok(celsius)
+    }
+
     pub fn read_register(&mut self, register: Register) -> Result<u8, E> {
         let mut data = [0];
         self.i2c
