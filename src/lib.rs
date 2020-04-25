@@ -12,7 +12,7 @@ use embedded_hal::blocking::delay::DelayMs;
 
 pub use register::Register;
 pub use accelerometer;
-use accelerometer::{{vector::{I16x3, F32x3}}, Accelerometer, RawAccelerometer};
+use accelerometer::{vector::{I16x3, F32x3}, Accelerometer, RawAccelerometer};
 
 pub use accelerometer::error::{Error, ErrorKind};
 
@@ -32,7 +32,7 @@ where
     I2C: WriteRead<Error = E> + Write<Error = E>,
     E: Debug
 {
-    pub fn new(i2c: I2C, delay: &mut DelayMs<u8>) -> Result<Self, Error<E>> {
+    pub fn new(i2c: I2C, delay: &mut impl DelayMs<u8>) -> Result<Self, Error<E>> {
         // TODO occasionally getting i2c transmit errors in here, needs debugging
         let mut bma421 = BMA421 { i2c };
         let id = bma421.read_register(Register::CHIPID)?;
@@ -56,7 +56,7 @@ where
         }
     }
 
-    fn write_config_file(&mut self, delay: &mut DelayMs<u8>) -> Result<(), Error<E>> {
+    fn write_config_file(&mut self, delay: &mut impl DelayMs<u8>) -> Result<(), Error<E>> {
         let mut power_conf = self.read_register(Register::POWER_CONF)?;
         power_conf &= !(1 << 0x01);
         self.write_register(Register::POWER_CONF, power_conf)?;
@@ -74,7 +74,7 @@ where
         self.stream_transfer_write(&buf, (CONFIG_FILE.len() - REMAINDER) as u16)?;
         self.write_register(Register::INIT_CTRL, 0x01)?;
         delay.delay_ms(150);
-        let config_stream_status = self.read_register(Register::INTERNAL_STAT)?; 
+        let _config_stream_status = self.read_register(Register::INTERNAL_STAT)?; 
         //if config_stream_status != 0x01 {
         //    Err(Error::new(ErrorKind::Device))
         //} else {
